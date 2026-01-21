@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Email Extractor & Deduplicator",
+  "version": "1.0.0",
+  "description": "Extract and deduplicate unique email addresses from filter folders",
+  "author": "Adam Zagórski",
+  "permissions": ["accountsRead", "messagesRead", "menus"],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "action": {
+    "default_title": "Email Extraction & Deduplication",
+    "default_popup": "popup.html",
+    "default_icon": "icon.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "email-extractor@local",
+      "strict_min_version": "102.0"
+    }
+  }
+}
