@@ -71,19 +71,13 @@ async function scanAccountForNewSenders(account) {
   let added = 0;
   const inboxFolders = [];
 
-  const allFolders = await messenger.folders.get(account.id);
+  const allFolders = await messenger.folders.query({ accountId: account.id });
 
-  async function collectFolders(folders) {
-    for (const folder of folders) {
-      if (folder.type === "inbox" || (!folder.type && folder.path.toLowerCase().includes("inbox"))) {
-        inboxFolders.push(folder);
-      }
-      if (folder.subFolders) {
-        await collectFolders(folder.subFolders);
-      }
+  for (const folder of allFolders) {
+    if (folder.type === "inbox" || (!folder.type && folder.path.toLowerCase().includes("inbox"))) {
+      inboxFolders.push(folder);
     }
   }
-  await collectFolders(allFolders);
 
   if (inboxFolders.length === 0) {
     console.log(`No inbox found for account: ${account.id}`);
