@@ -21,9 +21,8 @@ jobs:
           npm install -g web-ext
           web-ext build --overwrite-dest
           ls -la web-ext-artifacts/
-          echo "ARTIFACT_EXISTS=$(ls -1 web-ext-artifacts/*.xpi 2>/dev/null | wc -l)" >> $GITHUB_OUTPUT
 
-- name: Upload XPI artifact
+      - name: Upload XPI artifact
         uses: actions/upload-artifact@v4
         with:
           name: thunderbird-email-extractor
