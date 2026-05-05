@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Email Senders to Address Book",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Automatically add email senders to address book and scan new emails daily",
   "author": "Adam Zagórski",
   "permissions": [
