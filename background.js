@@ -36,17 +36,13 @@ async function initialize() {
 
 async function setupMenu() {
   try {
-    const existing = await messenger.menus.get();
-    const exists = existing.some(m => m.id === "extract-senders");
-    if (!exists) {
-      await messenger.menus.create({
-        id: "extract-senders",
-        title: "Scan & Add Senders to Address Book",
-        contexts: ["folder_pane"],
-      });
-    }
+    await messenger.menus.create({
+      id: "extract-senders",
+      title: "Scan & Add Senders to Address Book",
+      contexts: ["folder_pane"],
+    });
   } catch (e) {
-    console.log("Menu setup:", e.message);
+    console.log("Menu already exists or error:", e.message);
   }
 }
 
