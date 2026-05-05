@@ -65,8 +65,12 @@ messenger.menus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "extract-senders" && info.selectedFolders?.length > 0) {
     const folder = info.selectedFolders[0];
     try {
-      const result = await scanFolderForNewSenders(folder, folder.accountId);
-      console.log(`Manual scan complete: ${result} new senders added`);
+      const accountInfo = await messenger.accounts.get(folder.accountId);
+      const bookId = await getOrCreateAddressBookForAccount(accountInfo);
+      if (bookId) {
+        const result = await scanFolderForNewSenders(folder, bookId);
+        console.log(`Manual scan complete: ${result} new senders added`);
+      }
     } catch (error) {
       console.error("Manual scan failed:", error);
     }
