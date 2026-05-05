@@ -242,11 +242,15 @@ async function saveProcessedIds() {
   await messenger.storage.local.set({ [STORAGE_KEY_PROCESSED]: Array.from(processedMessageIds) });
 }
 
-messenger.menus.create({
-  id: "extract-senders",
-  title: "Scan & Add Senders to Address Book",
-  contexts: ["folder_pane"],
-});
+try {
+  await messenger.menus.create({
+    id: "extract-senders",
+    title: "Scan & Add Senders to Address Book",
+    contexts: ["folder_pane"],
+  });
+} catch (e) {
+  console.log("Menu already exists, skipping creation");
+}
 
 messenger.menus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "extract-senders" && info.selectedFolders?.length > 0) {
