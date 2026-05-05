@@ -33,7 +33,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: thunderbird-email-extractor
-          path: web-ext-artifacts/
+          path: web-ext-artifacts/*.zip
 
   release:
     needs: build
@@ -52,7 +52,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: "*.xpi"
+          files: "*.zip"
           tag_name: "v${{ steps.version.outputs.VERSION }}"
           generate_release_notes: true
         env:
