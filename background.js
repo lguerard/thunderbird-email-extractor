@@ -1,18 +1,18 @@
 const STORAGE_KEY_PROCESSED = "processedMessageIds";
 const STORAGE_KEY_LAST_SCAN = "lastScanTimestamp";
-const STORAGE_KEY_ADDRESS_BOOK = "targetAddressBookId";
+const STORAGE_KEY_ACCOUNT_BOOKS = "accountAddressBooks";
 const ALARM_NAME = "dailyEmailScan";
 const SCAN_INTERVAL_MINUTES = 24 * 60;
 
 let processedMessageIds = new Set();
 let lastScanTimestamp = 0;
-let targetAddressBookId = null;
+let accountAddressBooks = {};
 
 async function initialize() {
   const stored = await messenger.storage.local.get([
     STORAGE_KEY_PROCESSED,
     STORAGE_KEY_LAST_SCAN,
-    STORAGE_KEY_ADDRESS_BOOK,
+    STORAGE_KEY_ACCOUNT_BOOKS,
   ]);
 
   if (stored[STORAGE_KEY_PROCESSED]) {
@@ -21,8 +21,8 @@ async function initialize() {
   if (stored[STORAGE_KEY_LAST_SCAN]) {
     lastScanTimestamp = stored[STORAGE_KEY_LAST_SCAN];
   }
-  if (stored[STORAGE_KEY_ADDRESS_BOOK]) {
-    targetAddressBookId = stored[STORAGE_KEY_ADDRESS_BOOK];
+  if (stored[STORAGE_KEY_ACCOUNT_BOOKS]) {
+    accountAddressBooks = stored[STORAGE_KEY_ACCOUNT_BOOKS];
   }
 
   await setupDailyAlarm();
@@ -52,6 +52,7 @@ async function runDailyScan() {
     let totalAdded = 0;
 
     for (const account of accounts) {
+      console.log(`Scanning account: ${account.id}`);
       const result = await scanAccountForNewSenders(account);
       totalAdded += result.added;
     }
@@ -69,15 +70,19 @@ async function runDailyScan() {
 
 async function scanAccountForNewSenders(account) {
   let added = 0;
-  const inboxFolders = [];
+
+  const bookId = await getOrCreateAddressBookForAccount(account);
+  if (!bookId) {
+    console.log(`No address book found for account: ${account.id}`);
+    return { added: 0 };
+  }
+
+  console.log(`Using address book: ${bookId} for account: ${account.id}`);
 
   const allFolders = await messenger.folders.query({ accountId: account.id });
-
-  for (const folder of allFolders) {
-    if (folder.type === "inbox" || (!folder.type && folder.path.toLowerCase().includes("inbox"))) {
-      inboxFolders.push(folder);
-    }
-  }
+  const inboxFolders = allFolders.filter(f => 
+    f.type === "inbox" || (!f.type && f.path.toLowerCase().includes("inbox"))
+  );
 
   if (inboxFolders.length === 0) {
     console.log(`No inbox found for account: ${account.id}`);
@@ -86,14 +91,14 @@ async function scanAccountForNewSenders(account) {
 
   for (const folder of inboxFolders) {
     console.log(`Scanning folder: ${folder.path}`);
-    const result = await scanFolderForNewSenders(folder);
+    const result = await scanFolderForNewSenders(folder, bookId);
     added += result;
   }
 
   return { added };
 }
 
-async function scanFolderForNewSenders(folder) {
+async function scanFolderForNewSenders(folder, bookId) {
   let added = 0;
   let hasMore = true;
   let messageList = null;
@@ -115,8 +120,8 @@ async function scanFolderForNewSenders(folder) {
 
       if (msg.author) {
         const senderEmail = extractEmail(msg.author);
-        if (senderEmail && !isOwnEmail(senderEmail, msg.folder?.accountId)) {
-          const addedContact = await addToAddressBook(senderEmail, msg.author);
+        if (senderEmail && !await isOwnEmail(senderEmail, msg.folder?.accountId)) {
+          const addedContact = await addToAddressBook(bookId, senderEmail, msg.author);
           if (addedContact) {
             added++;
           }
@@ -163,24 +168,41 @@ async function isOwnEmail(email, accountId) {
   return false;
 }
 
-async function addToAddressBook(email, displayName) {
-  try {
-    let bookId = targetAddressBookId;
+async function getOrCreateAddressBookForAccount(account) {
+  if (accountAddressBooks[account.id]) {
+    return accountAddressBooks[account.id];
+  }
 
-    if (!bookId) {
-      const books = await messenger.addressBooks.list();
-      if (books.length > 0) {
-        bookId = books[0].id;
-        targetAddressBookId = bookId;
-        await messenger.storage.local.set({ [STORAGE_KEY_ADDRESS_BOOK]: bookId });
-      } else {
-        const newBook = await messenger.addressBooks.create("Collected Senders");
-        bookId = newBook.id;
-        targetAddressBookId = bookId;
-        await messenger.storage.local.set({ [STORAGE_KEY_ADDRESS_BOOK]: bookId });
-      }
+  try {
+    const allBooks = await messenger.addressBooks.list();
+    console.log(`Available address books: ${allBooks.map(b => b.name).join(", ")}`);
+
+    let book = allBooks.find(b => b.name === account.id) || 
+               allBooks.find(b => b.name.toLowerCase().includes(account.email?.split("@")[1] || ""));
+
+    if (!book) {
+      const accountName = account.email?.split("@")[1] || account.id;
+      book = await messenger.addressBooks.create(`${accountName} Senders`);
+      console.log(`Created new address book: ${book.name}`);
     }
 
+    accountAddressBooks[account.id] = book.id;
+    await messenger.storage.local.set({ [STORAGE_KEY_ACCOUNT_BOOKS]: accountAddressBooks });
+
+    return book.id;
+  } catch (error) {
+    console.error(`Failed to get/create address book for account ${account.id}:`, error);
+    return null;
+  }
+}
+
+async function addToAddressBook(bookId, email, displayName) {
+  if (!bookId) {
+    console.error("No bookId provided to addToAddressBook");
+    return false;
+  }
+
+  try {
     const contacts = await messenger.addressBooks.listContacts(bookId);
     const existingEmails = new Set(contacts.map(c => c.primaryEmail?.toLowerCase()));
 
@@ -188,14 +210,22 @@ async function addToAddressBook(email, displayName) {
       return false;
     }
 
-    const name = displayName && !displayName.includes("<") ? displayName : email.split("@")[0];
+    let name = email.split("@")[0];
+    if (displayName && displayName.includes("<")) {
+      const match = displayName.match(/^([^<]+)/);
+      if (match) {
+        name = match[1].trim();
+      }
+    } else if (displayName && displayName.trim()) {
+      name = displayName.trim();
+    }
 
     await messenger.addressBooks.createContact(bookId, {
       displayName: name,
       primaryEmail: email,
     });
 
-    console.log(`Added contact: ${email}`);
+    console.log(`Added contact: ${email} to book ${bookId}`);
     return true;
   } catch (error) {
     console.error(`Failed to add contact ${email}:`, error);
@@ -222,7 +252,8 @@ messenger.menus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "extract-senders" && info.selectedFolders?.length > 0) {
     const folder = info.selectedFolders[0];
     try {
-      const result = await scanFolderForNewSenders(folder);
+      const bookId = await getOrCreateAddressBookForAccount({ id: folder.accountId });
+      const result = await scanFolderForNewSenders(folder, bookId);
       console.log(`Manual scan complete: ${result} new senders added`);
     } catch (error) {
       console.error("Manual scan failed:", error);
@@ -235,13 +266,8 @@ async function getStatus() {
   return {
     processedCount: processedMessageIds.size,
     lastScan: stored[STORAGE_KEY_LAST_SCAN] || null,
-    addressBookId: targetAddressBookId,
+    accountBooks: accountAddressBooks,
   };
-}
-
-async function setAddressBook(bookId) {
-  targetAddressBookId = bookId;
-  await messenger.storage.local.set({ [STORAGE_KEY_ADDRESS_BOOK]: bookId });
 }
 
 async function runManualScan() {
