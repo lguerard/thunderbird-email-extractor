@@ -1,177 +1,257 @@
-// ============================================================================
-// EMAIL EXTRACTOR - with distinction between incoming and outgoing messages
-// ============================================================================
+const STORAGE_KEY_PROCESSED = "processedMessageIds";
+const STORAGE_KEY_LAST_SCAN = "lastScanTimestamp";
+const STORAGE_KEY_ADDRESS_BOOK = "targetAddressBookId";
+const ALARM_NAME = "dailyEmailScan";
+const SCAN_INTERVAL_MINUTES = 24 * 60;
+
+let processedMessageIds = new Set();
+let lastScanTimestamp = 0;
+let targetAddressBookId = null;
+
+async function initialize() {
+  const stored = await messenger.storage.local.get([
+    STORAGE_KEY_PROCESSED,
+    STORAGE_KEY_LAST_SCAN,
+    STORAGE_KEY_ADDRESS_BOOK,
+  ]);
+
+  if (stored[STORAGE_KEY_PROCESSED]) {
+    processedMessageIds = new Set(stored[STORAGE_KEY_PROCESSED]);
+  }
+  if (stored[STORAGE_KEY_LAST_SCAN]) {
+    lastScanTimestamp = stored[STORAGE_KEY_LAST_SCAN];
+  }
+  if (stored[STORAGE_KEY_ADDRESS_BOOK]) {
+    targetAddressBookId = stored[STORAGE_KEY_ADDRESS_BOOK];
+  }
+
+  await setupDailyAlarm();
+  console.log("Email Senders Extractor initialized");
+  console.log(`Processed ${processedMessageIds.size} messages previously`);
+  console.log(`Last scan: ${lastScanTimestamp ? new Date(lastScanTimestamp).toISOString() : "Never"}`);
+}
+
+async function setupDailyAlarm() {
+  const alarms = await messenger.alarms.get(ALARM_NAME);
+  if (!alarms) {
+    await messenger.alarms.create(ALARM_NAME, { delayInMinutes: SCAN_INTERVAL_MINUTES });
+    console.log(`Daily alarm set for every ${SCAN_INTERVAL_MINUTES} minutes`);
+  }
+}
+
+messenger.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === ALARM_NAME) {
+    console.log("Daily scan triggered");
+    await runDailyScan();
+  }
+});
+
+async function runDailyScan() {
+  try {
+    const accounts = await messenger.accounts.list();
+    let totalAdded = 0;
+
+    for (const account of accounts) {
+      const result = await scanAccountForNewSenders(account);
+      totalAdded += result.added;
+    }
+
+    lastScanTimestamp = Date.now();
+    await messenger.storage.local.set({ [STORAGE_KEY_LAST_SCAN]: lastScanTimestamp });
+
+    console.log(`Daily scan complete: ${totalAdded} new senders added`);
+    return { added: totalAdded, timestamp: lastScanTimestamp };
+  } catch (error) {
+    console.error("Daily scan failed:", error);
+    throw error;
+  }
+}
+
+async function scanAccountForNewSenders(account) {
+  let added = 0;
+  const inboxFolders = [];
+
+  const allFolders = await messenger.folders.get(account.id);
+
+  async function collectFolders(folders) {
+    for (const folder of folders) {
+      if (folder.type === "inbox" || (!folder.type && folder.path.toLowerCase().includes("inbox"))) {
+        inboxFolders.push(folder);
+      }
+      if (folder.subFolders) {
+        await collectFolders(folder.subFolders);
+      }
+    }
+  }
+  await collectFolders(allFolders);
+
+  if (inboxFolders.length === 0) {
+    console.log(`No inbox found for account: ${account.id}`);
+    return { added: 0 };
+  }
+
+  for (const folder of inboxFolders) {
+    console.log(`Scanning folder: ${folder.path}`);
+    const result = await scanFolderForNewSenders(folder);
+    added += result;
+  }
+
+  return { added };
+}
+
+async function scanFolderForNewSenders(folder) {
+  let added = 0;
+  let hasMore = true;
+  let messageList = null;
+
+  try {
+    messageList = await messenger.messages.list(folder.id);
+  } catch (error) {
+    console.error(`Cannot access folder ${folder.path}:`, error);
+    return 0;
+  }
+
+  while (hasMore && messageList && messageList.messages && messageList.messages.length > 0) {
+    for (const msg of messageList.messages) {
+      if (processedMessageIds.has(msg.id)) {
+        continue;
+      }
+
+      processedMessageIds.add(msg.id);
+
+      if (msg.author) {
+        const senderEmail = extractEmail(msg.author);
+        if (senderEmail && !isOwnEmail(senderEmail, msg.folder?.accountId)) {
+          const addedContact = await addToAddressBook(senderEmail, msg.author);
+          if (addedContact) {
+            added++;
+          }
+        }
+      }
+    }
+
+    if (messageList.id) {
+      try {
+        messageList = await messenger.messages.continueList(messageList.id);
+      } catch {
+        hasMore = false;
+      }
+    } else {
+      hasMore = false;
+    }
+  }
+
+  await saveProcessedIds();
+  console.log(`Scanned folder ${folder.path}: ${added} new senders added`);
+  return added;
+}
+
+function extractEmail(mailboxString) {
+  if (!mailboxString || mailboxString.length === 0) return null;
+  const match = mailboxString.match(/([a-zA-Z0-9._%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+  return match ? match[1].toLowerCase() : null;
+}
+
+async function isOwnEmail(email, accountId) {
+  if (!accountId) return false;
+  try {
+    const account = await messenger.accounts.get(accountId);
+    if (account && account.identities) {
+      for (const identity of account.identities) {
+        if (identity.email && identity.email.toLowerCase() === email.toLowerCase()) {
+          return true;
+        }
+      }
+    }
+  } catch (e) {
+    // Ignore
+  }
+  return false;
+}
+
+async function addToAddressBook(email, displayName) {
+  try {
+    let bookId = targetAddressBookId;
+
+    if (!bookId) {
+      const books = await messenger.addressBooks.list();
+      if (books.length > 0) {
+        bookId = books[0].id;
+        targetAddressBookId = bookId;
+        await messenger.storage.local.set({ [STORAGE_KEY_ADDRESS_BOOK]: bookId });
+      } else {
+        const newBook = await messenger.addressBooks.create("Collected Senders");
+        bookId = newBook.id;
+        targetAddressBookId = bookId;
+        await messenger.storage.local.set({ [STORAGE_KEY_ADDRESS_BOOK]: bookId });
+      }
+    }
+
+    const contacts = await messenger.addressBooks.listContacts(bookId);
+    const existingEmails = new Set(contacts.map(c => c.primaryEmail?.toLowerCase()));
+
+    if (existingEmails.has(email.toLowerCase())) {
+      return false;
+    }
+
+    const name = displayName && !displayName.includes("<") ? displayName : email.split("@")[0];
+
+    await messenger.addressBooks.createContact(bookId, {
+      displayName: name,
+      primaryEmail: email,
+    });
+
+    console.log(`Added contact: ${email}`);
+    return true;
+  } catch (error) {
+    console.error(`Failed to add contact ${email}:`, error);
+    return false;
+  }
+}
+
+async function saveProcessedIds() {
+  const arr = Array.from(processedMessageIds);
+  if (arr.length > 10000) {
+    const trimmed = arr.slice(-5000);
+    processedMessageIds = new Set(trimmed);
+  }
+  await messenger.storage.local.set({ [STORAGE_KEY_PROCESSED]: Array.from(processedMessageIds) });
+}
 
 messenger.menus.create({
-  id: "extract-emails",
-  title: "Email Extraction & Deduplication",
+  id: "extract-senders",
+  title: "Scan & Add Senders to Address Book",
   contexts: ["folder_pane"],
 });
 
 messenger.menus.onClicked.addListener(async (info, tab) => {
-  if (
-    info.menuItemId === "extract-emails" &&
-    info.selectedFolders?.length > 0
-  ) {
+  if (info.menuItemId === "extract-senders" && info.selectedFolders?.length > 0) {
     const folder = info.selectedFolders[0];
-
     try {
-      const emails = await extractFromFolder(
-        folder.id,
-        folder.path,
-        folder.specialUse,
-      );
-      downloadCSV(emails, folder.name);
+      const result = await scanFolderForNewSenders(folder);
+      console.log(`Manual scan complete: ${result} new senders added`);
     } catch (error) {
-      console.error("Error:", error);
+      console.error("Manual scan failed:", error);
     }
   }
 });
 
-async function extractFromFolder(folderId, folderPath, specialUse) {
-  const emailCountMapGet = new Map();
-  const emailCountMapPost = new Map();
-
-  let isOutgoingFolder = false;
-
-  if (specialUse && Array.isArray(specialUse) && specialUse.length > 0) {
-    isOutgoingFolder =
-      specialUse.includes("sent") || specialUse.includes("drafts");
-  } else if (folderPath) {
-    isOutgoingFolder =
-      folderPath.toLowerCase().includes("sent") ||
-      folderPath.toLowerCase().includes("drafts");
-  }
-
-  console.log(`📁 Folder: ${folderPath}`);
-  console.log(`🏷️ Special Use: ${specialUse}`);
-  console.log(
-    `📤 Type: ${isOutgoingFolder ? "SENT (post)" : "INCOMING (get)"}`,
-  );
-
-  try {
-    let messageList = await messenger.messages.list(folderId);
-
-    while (
-      messageList &&
-      messageList.messages &&
-      messageList.messages.length > 0
-    ) {
-      for (const msg of messageList.messages) {
-        if (isOutgoingFolder) {
-          if (msg.recipients && Array.isArray(msg.recipients)) {
-            for (const r of msg.recipients) {
-              extractAndCount(r, emailCountMapPost);
-            }
-          }
-
-          if (msg.ccList && Array.isArray(msg.ccList)) {
-            for (const c of msg.ccList) {
-              extractAndCount(c, emailCountMapPost);
-            }
-          }
-
-          if (msg.bccList && Array.isArray(msg.bccList)) {
-            for (const b of msg.bccList) {
-              extractAndCount(b, emailCountMapPost);
-            }
-          }
-        } else {
-          extractAndCount(msg.author, emailCountMapGet);
-        }
-      }
-
-      if (messageList.id) {
-        messageList = await messenger.messages.continueList(messageList.id);
-      } else {
-        break;
-      }
-    }
-  } catch (error) {
-    console.error("Error in extractFromFolder:", error);
-    throw error;
-  }
-
-  const formattedEmailsGet = Array.from(emailCountMapGet.entries()).map(
-    ([email, count]) => {
-      const domain = extractDomain(email);
-      return {
-        type: "get",
-        email: email,
-        count: count,
-        domain: domain,
-        formatted: `{get} [${count}] ("${domain}") ${email}`,
-      };
-    },
-  );
-
-  const formattedEmailsPost = Array.from(emailCountMapPost.entries()).map(
-    ([email, count]) => {
-      const domain = extractDomain(email);
-      return {
-        type: "post",
-        email: email,
-        count: count,
-        domain: domain,
-        formatted: `{post} [${count}] ("${domain}") ${email}`,
-      };
-    },
-  );
-
-  const allEmails = [...formattedEmailsGet, ...formattedEmailsPost];
-
-  allEmails.sort((a, b) => {
-    if (a.type !== b.type) {
-      return a.type === "get" ? -1 : 1;
-    }
-    if (b.count !== a.count) return b.count - a.count;
-    return a.email.localeCompare(b.email);
-  });
-
-  return allEmails;
+async function getStatus() {
+  const stored = await messenger.storage.local.get([STORAGE_KEY_LAST_SCAN]);
+  return {
+    processedCount: processedMessageIds.size,
+    lastScan: stored[STORAGE_KEY_LAST_SCAN] || null,
+    addressBookId: targetAddressBookId,
+  };
 }
 
-function extractAndCount(mailboxString, emailCountMap) {
-  if (!mailboxString || mailboxString.length === 0) return;
-
-  const addr = extractEmailFromMailbox(mailboxString);
-  if (addr) {
-    const lowerAddr = addr.toLowerCase();
-    emailCountMap.set(lowerAddr, (emailCountMap.get(lowerAddr) || 0) + 1);
-  }
+async function setAddressBook(bookId) {
+  targetAddressBookId = bookId;
+  await messenger.storage.local.set({ [STORAGE_KEY_ADDRESS_BOOK]: bookId });
 }
 
-function extractEmailFromMailbox(mailboxString) {
-  if (!mailboxString || mailboxString.length === 0) return null;
-
-  const match = mailboxString.match(
-    /([a-zA-Z0-9._%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/,
-  );
-
-  return match ? match[1] : null;
+async function runManualScan() {
+  return await runDailyScan();
 }
 
-function extractDomain(email) {
-  const parts = email.split("@");
-  return parts.length > 1 ? parts[1] : "";
-}
-
-function downloadCSV(formattedEmails, folderName) {
-  const header = "{type} [number of appearances] ('domain') email\n";
-  const lines = formattedEmails.map((item) => item.formatted);
-  const csv = header + lines.join("\n");
-
-  const blob = new Blob([csv], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `emails_${folderName.replace(/[/\\?%*:|"<>]/g, "_")}_${new Date().toISOString().split("T")[0]}.txt`;
-  link.style.visibility = "hidden";
-
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-
-  URL.revokeObjectURL(url);
-}
+initialize();

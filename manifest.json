@@ -1,21 +1,29 @@
 {
   "manifest_version": 3,
-  "name": "Email Extractor & Deduplicator",
-  "version": "1.0.0",
-  "description": "Extract and deduplicate unique email addresses from filter folders",
+  "name": "Email Senders to Address Book",
+  "version": "2.0.0",
+  "description": "Automatically add email senders to address book and scan new emails daily",
   "author": "Adam Zagórski",
-  "permissions": ["accountsRead", "messagesRead", "menus"],
+  "permissions": [
+    "accountsRead",
+    "messagesRead",
+    "menus",
+    "alarms",
+    "storage",
+    "addressBooks"
+  ],
   "background": {
-    "scripts": ["background.js"]
+    "scripts": ["background.js"],
+    "persistent": false
   },
   "action": {
-    "default_title": "Email Extraction & Deduplication",
+    "default_title": "Email Senders Extractor",
     "default_popup": "popup.html",
     "default_icon": "icon.png"
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "email-extractor@local",
+      "id": "email-senders-extractor@local",
       "strict_min_version": "102.0"
     }
   }
