@@ -43,10 +43,10 @@ jobs:
         run: echo "VERSION=$(node -p 'require("./manifest.json").version')" >> $GITHUB_OUTPUT
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
-          files: *.xpi
-          tag_name: v${{ steps.version.outputs.VERSION }}
+          files: "*.xpi"
+          tag_name: "v${{ steps.version.outputs.VERSION }}"
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
