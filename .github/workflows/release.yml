@@ -53,5 +53,7 @@ jobs:
           files: "*.zip"
           tag_name: "v${{ steps.version.outputs.VERSION }}"
           generate_release_notes: true
+          name: "Release v${{ steps.version.outputs.VERSION }}"
+          body: "Version ${{ steps.version.outputs.VERSION }} - Auto-generated release notes"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
