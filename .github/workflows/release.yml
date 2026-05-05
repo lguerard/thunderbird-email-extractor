@@ -40,7 +40,10 @@ jobs:
 
       - name: Get version
         id: version
-        run: echo "VERSION=$(node -p 'require(\"./manifest.json\").version')" >> $GITHUB_OUTPUT
+        run: |
+          VERSION=$(node -p "require('./manifest.json').version")
+          echo "VERSION=$VERSION"
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
