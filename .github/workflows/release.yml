@@ -23,12 +23,11 @@ jobs:
           ls -la web-ext-artifacts/
           echo "ARTIFACT_EXISTS=$(ls -1 web-ext-artifacts/*.xpi 2>/dev/null | wc -l)" >> $GITHUB_OUTPUT
 
-      - name: Upload XPI artifact
-        if: success()
+- name: Upload XPI artifact
         uses: actions/upload-artifact@v4
         with:
           name: thunderbird-email-extractor
-          path: web-ext-artifacts/*.xpi
+          path: web-ext-artifacts/*.zip
 
   release:
     needs: build
@@ -47,7 +46,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: "*.xpi"
+          files: "*.zip"
           tag_name: "v${{ steps.version.outputs.VERSION }}"
           generate_release_notes: true
         env:
