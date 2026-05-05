@@ -113,5 +113,6 @@ jobs:
           tag_name: "v${{ needs.bump-version.outputs.new_version }}"
           generate_release_notes: true
           name: "Release v${{ needs.bump-version.outputs.new_version }}"
+          body: "See commit history for changes"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
