@@ -16,17 +16,17 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install web-ext
-        run: npm install -g web-ext
-
       - name: Build XPI
-        run: web-ext build --overwrite-dest
+        run: |
+          npm install -g web-ext
+          web-ext build --overwrite-dest --output-dir ./dist
+          ls -la ./dist
 
       - name: Upload XPI artifact
         uses: actions/upload-artifact@v4
         with:
           name: thunderbird-email-extractor
-          path: web-ext-artifacts/*.xpi
+          path: ./dist/*.xpi
 
   release:
     needs: build
@@ -40,7 +40,7 @@ jobs:
 
       - name: Get version
         id: version
-        run: echo "VERSION=$(node -p 'require("./manifest.json").version')" >> $GITHUB_OUTPUT
+        run: echo "VERSION=$(node -p 'require(\"./manifest.json\").version')" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
