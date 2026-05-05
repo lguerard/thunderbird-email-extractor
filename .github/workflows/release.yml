@@ -19,14 +19,14 @@ jobs:
       - name: Build XPI
         run: |
           npm install -g web-ext
-          web-ext build --overwrite-dest --output-dir ./dist
-          ls -la ./dist
+          web-ext build --overwrite-dest
+          ls -la web-ext-artifacts/
 
       - name: Upload XPI artifact
         uses: actions/upload-artifact@v4
         with:
           name: thunderbird-email-extractor
-          path: ./dist/*.xpi
+          path: web-ext-artifacts/*.xpi
 
   release:
     needs: build
