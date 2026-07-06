@@ -207,6 +207,23 @@ async function scanFolderForNewSenders(folder, bookId) {
   return added;
 }
 
+function extractVCardEmail(vCard) {
+  if (!vCard) return null;
+  const match = vCard.match(/^EMAIL[^:]*:(.+)$/im);
+  return match ? match[1].trim().toLowerCase() : null;
+}
+
+function buildVCard(name, email) {
+  const escape = (s) => s.replace(/([,;\\])/g, "\\$1");
+  return (
+    "BEGIN:VCARD\r\n" +
+    "VERSION:3.0\r\n" +
+    `FN:${escape(name)}\r\n` +
+    `EMAIL:${email}\r\n` +
+    "END:VCARD\r\n"
+  );
+}
+
 function extractEmail(mailboxString) {
   if (!mailboxString || mailboxString.length === 0) return null;
   const match = mailboxString.match(/([a-zA-Z0-9._%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
@@ -250,7 +267,7 @@ async function getOrCreateAddressBookForAccount(account) {
     if (allBooks.length === 0) {
       console.log("No address books exist, creating one...");
       const domain = account.email?.split("@")[1] || "default";
-      const newBook = await messenger.addressBooks.create(`${domain} Contacts`);
+      const newBook = await messenger.addressBooks.create({ name: `${domain} Contacts` });
       console.log(`Created new address book: ${newBook.name} (${newBook.id})`);
       accountAddressBooks[accountId] = newBook.id;
       await messenger.storage.local.set({ [STORAGE_KEY_ACCOUNT_BOOKS]: accountAddressBooks });
@@ -283,10 +300,12 @@ async function addToAddressBook(bookId, email, displayName) {
 
   try {
     console.log(`Listing contacts in book ${bookId}...`);
-    const contacts = await messenger.addressBooks.listContacts(bookId);
+    const contacts = await messenger.addressBooks.contacts.list(bookId);
     console.log(`Found ${contacts.length} existing contacts`);
 
-    const existingEmails = new Set(contacts.map(c => c.primaryEmail?.toLowerCase()));
+    const existingEmails = new Set(
+      contacts.map(c => extractVCardEmail(c.vCard)).filter(Boolean)
+    );
 
     if (existingEmails.has(email.toLowerCase())) {
       console.log(`Email ${email} already exists in address book`);
@@ -304,10 +323,7 @@ async function addToAddressBook(bookId, email, displayName) {
     }
 
     console.log(`Creating contact: ${name} <${email}>`);
-    await messenger.addressBooks.createContact(bookId, {
-      displayName: name,
-      primaryEmail: email,
-    });
+    await messenger.addressBooks.contacts.create(bookId, buildVCard(name, email));
 
     console.log(`Successfully added contact: ${email}`);
     return "added";
