@@ -164,7 +164,7 @@ async function scanFolderForNewSenders(folder, bookId) {
         continue;
       }
 
-      processedMessageIds.add(msg.id);
+      let handled = true;
 
       if (msg.author) {
         console.log(`Processing author: ${msg.author}`);
@@ -173,15 +173,21 @@ async function scanFolderForNewSenders(folder, bookId) {
           console.log(`Extracted email: ${senderEmail}`);
           const isOwn = await isOwnEmail(senderEmail, folder.accountId);
           console.log(`Is own email: ${isOwn}`);
-          
+
           if (!isOwn) {
-            const addedContact = await addToAddressBook(bookId, senderEmail, msg.author);
-            console.log(`Added contact result: ${addedContact}`);
-            if (addedContact) {
+            const result = await addToAddressBook(bookId, senderEmail, msg.author);
+            console.log(`Add contact result: ${result}`);
+            if (result === "added") {
               added++;
+            } else if (result === "error") {
+              handled = false;
             }
           }
         }
+      }
+
+      if (handled) {
+        processedMessageIds.add(msg.id);
       }
     }
 
@@ -226,15 +232,20 @@ async function isOwnEmail(email, accountId) {
 
 async function getOrCreateAddressBookForAccount(account) {
   const accountId = account.id;
-  
-  if (accountAddressBooks[accountId]) {
-    return accountAddressBooks[accountId];
-  }
 
   try {
     console.log("Getting address books list...");
     const allBooks = await messenger.addressBooks.list();
     console.log(`Available address books: ${JSON.stringify(allBooks)}`);
+
+    if (accountAddressBooks[accountId]) {
+      const cachedId = accountAddressBooks[accountId];
+      if (allBooks.some(b => b.id === cachedId)) {
+        return cachedId;
+      }
+      console.log(`Cached address book ${cachedId} no longer exists, recreating...`);
+      delete accountAddressBooks[accountId];
+    }
 
     if (allBooks.length === 0) {
       console.log("No address books exist, creating one...");
@@ -267,19 +278,19 @@ async function getOrCreateAddressBookForAccount(account) {
 async function addToAddressBook(bookId, email, displayName) {
   if (!bookId) {
     console.error("No bookId provided to addToAddressBook");
-    return false;
+    return "error";
   }
 
   try {
     console.log(`Listing contacts in book ${bookId}...`);
     const contacts = await messenger.addressBooks.listContacts(bookId);
     console.log(`Found ${contacts.length} existing contacts`);
-    
+
     const existingEmails = new Set(contacts.map(c => c.primaryEmail?.toLowerCase()));
 
     if (existingEmails.has(email.toLowerCase())) {
       console.log(`Email ${email} already exists in address book`);
-      return false;
+      return "exists";
     }
 
     let name = email.split("@")[0];
@@ -299,10 +310,10 @@ async function addToAddressBook(bookId, email, displayName) {
     });
 
     console.log(`Successfully added contact: ${email}`);
-    return true;
+    return "added";
   } catch (error) {
     console.error(`Failed to add contact ${email}:`, error);
-    return false;
+    return "error";
   }
 }
 
