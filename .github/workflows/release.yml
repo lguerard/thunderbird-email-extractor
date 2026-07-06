@@ -121,7 +121,7 @@ jobs:
         with:
           files: "*.zip"
           tag_name: "v${{ needs.bump-version.outputs.new_version }}"
-          name: "Release v${{ needs.bump-version.outputs.new_version }}"
+          name: "${{ github.event.repository.name }} v${{ needs.bump-version.outputs.new_version }}"
           body: ${{ steps.cliff.outputs.content }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
