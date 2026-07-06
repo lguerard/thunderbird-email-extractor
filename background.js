@@ -339,4 +339,10 @@ async function runManualScan() {
   return await runDailyScan();
 }
 
+async function resetProcessedIds() {
+  processedMessageIds = new Set();
+  await messenger.storage.local.set({ [STORAGE_KEY_PROCESSED]: [] });
+  console.log("Processed message history cleared");
+}
+
 initialize();

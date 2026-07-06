@@ -49,6 +49,19 @@ document.getElementById("scanInboxBtn").addEventListener("click", async () => {
   }
 });
 
+document.getElementById("resetBtn").addEventListener("click", async () => {
+  showStatus("Clearing processed history...", "info");
+  try {
+    const bg = await messenger.runtime.getBackgroundPage();
+    await bg.resetProcessedIds();
+    showStatus("History cleared. Run a scan to re-check all messages.", "success");
+    await loadStatus();
+  } catch (error) {
+    console.error(error);
+    showStatus("Error clearing history", "error");
+  }
+});
+
 function showStatus(msg, type) {
   const status = document.getElementById("status");
   status.textContent = msg;
