@@ -7,6 +7,20 @@ const SCAN_INTERVAL_MINUTES = 24 * 60;
 let processedMessageIds = new Set();
 let lastScanTimestamp = 0;
 let accountAddressBooks = {};
+let scanInProgress = false;
+
+async function withScanLock(fn) {
+  if (scanInProgress) {
+    console.log("Scan already in progress, skipping");
+    return { added: 0, skipped: true };
+  }
+  scanInProgress = true;
+  try {
+    return await fn();
+  } finally {
+    scanInProgress = false;
+  }
+}
 
 async function initialize() {
   const stored = await messenger.storage.local.get([
@@ -64,40 +78,58 @@ messenger.alarms.onAlarm.addListener(async (alarm) => {
 messenger.menus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "extract-senders" && info.selectedFolders?.length > 0) {
     const folder = info.selectedFolders[0];
-    try {
-      const accountInfo = await messenger.accounts.get(folder.accountId);
-      const bookId = await getOrCreateAddressBookForAccount(accountInfo);
-      if (bookId) {
-        const result = await scanFolderForNewSenders(folder, bookId);
-        console.log(`Manual scan complete: ${result} new senders added`);
+    await withScanLock(async () => {
+      try {
+        const accountInfo = await messenger.accounts.get(folder.accountId);
+        const bookId = await getOrCreateAddressBookForAccount(accountInfo);
+        if (bookId) {
+          const result = await scanFolderForNewSenders(folder, bookId);
+          console.log(`Manual scan complete: ${result} new senders added`);
+        }
+      } catch (error) {
+        console.error("Manual scan failed:", error);
       }
-    } catch (error) {
-      console.error("Manual scan failed:", error);
-    }
+    });
   }
 });
 
 async function runDailyScan() {
-  try {
+  return withScanLock(async () => {
+    try {
+      const accounts = await messenger.accounts.list();
+      console.log(`Found ${accounts.length} accounts`);
+      let totalAdded = 0;
+
+      for (const account of accounts) {
+        console.log(`Scanning account: ${account.id} (${account.email})`);
+        const result = await scanAccountForNewSenders(account);
+        totalAdded += result.added;
+      }
+
+      lastScanTimestamp = Date.now();
+      await messenger.storage.local.set({ [STORAGE_KEY_LAST_SCAN]: lastScanTimestamp });
+
+      console.log(`Daily scan complete: ${totalAdded} new senders added`);
+      return { added: totalAdded, timestamp: lastScanTimestamp };
+    } catch (error) {
+      console.error("Daily scan failed:", error);
+      throw error;
+    }
+  });
+}
+
+async function runInboxScan() {
+  return withScanLock(async () => {
     const accounts = await messenger.accounts.list();
-    console.log(`Found ${accounts.length} accounts`);
     let totalAdded = 0;
 
     for (const account of accounts) {
-      console.log(`Scanning account: ${account.id} (${account.email})`);
       const result = await scanAccountForNewSenders(account);
       totalAdded += result.added;
     }
 
-    lastScanTimestamp = Date.now();
-    await messenger.storage.local.set({ [STORAGE_KEY_LAST_SCAN]: lastScanTimestamp });
-
-    console.log(`Daily scan complete: ${totalAdded} new senders added`);
-    return { added: totalAdded, timestamp: lastScanTimestamp };
-  } catch (error) {
-    console.error("Daily scan failed:", error);
-    throw error;
-  }
+    return { added: totalAdded };
+  });
 }
 
 async function scanAccountForNewSenders(account) {
@@ -353,6 +385,34 @@ async function getStatus() {
 
 async function runManualScan() {
   return await runDailyScan();
+}
+
+async function dedupeAddressBooks() {
+  return withScanLock(async () => {
+    const books = await messenger.addressBooks.list();
+    let removed = 0;
+
+    for (const book of books) {
+      const contacts = await messenger.addressBooks.contacts.list(book.id);
+      const seenEmails = new Set();
+
+      for (const contact of contacts) {
+        const email = extractVCardEmail(contact.vCard);
+        if (!email) continue;
+
+        if (seenEmails.has(email)) {
+          console.log(`Removing duplicate contact ${email} (${contact.id}) from ${book.name}`);
+          await messenger.addressBooks.contacts.delete(contact.id);
+          removed++;
+        } else {
+          seenEmails.add(email);
+        }
+      }
+    }
+
+    console.log(`Dedupe complete: ${removed} duplicate contacts removed`);
+    return { removed };
+  });
 }
 
 async function resetProcessedIds() {

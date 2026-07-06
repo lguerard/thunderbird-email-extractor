@@ -21,7 +21,11 @@ document.getElementById("runScanBtn").addEventListener("click", async () => {
   try {
     const bg = await messenger.runtime.getBackgroundPage();
     const result = await bg.runManualScan();
-    showStatus(`Scan complete: ${result.added} new senders added`, "success");
+    if (result.skipped) {
+      showStatus("Scan already in progress", "info");
+    } else {
+      showStatus(`Scan complete: ${result.added} new senders added`, "success");
+    }
     await loadStatus();
   } catch (error) {
     console.error(error);
@@ -33,15 +37,12 @@ document.getElementById("scanInboxBtn").addEventListener("click", async () => {
   showStatus("Scanning inbox...", "info");
   try {
     const bg = await messenger.runtime.getBackgroundPage();
-    const accounts = await messenger.accounts.list();
-    let totalAdded = 0;
-
-    for (const account of accounts) {
-      const result = await bg.scanAccountForNewSenders(account);
-      totalAdded += result.added;
+    const result = await bg.runInboxScan();
+    if (result.skipped) {
+      showStatus("Scan already in progress", "info");
+    } else {
+      showStatus(`Inbox scan complete: ${result.added} new senders added`, "success");
     }
-
-    showStatus(`Inbox scan complete: ${totalAdded} new senders added`, "success");
     await loadStatus();
   } catch (error) {
     console.error(error);
@@ -59,6 +60,25 @@ document.getElementById("resetBtn").addEventListener("click", async () => {
   } catch (error) {
     console.error(error);
     showStatus("Error clearing history", "error");
+  }
+});
+
+document.getElementById("dedupeBtn").addEventListener("click", async () => {
+  if (!confirm("Remove duplicate contacts (same email, same address book)? This deletes the extras, keeping one copy of each.")) {
+    return;
+  }
+  showStatus("Removing duplicates...", "info");
+  try {
+    const bg = await messenger.runtime.getBackgroundPage();
+    const result = await bg.dedupeAddressBooks();
+    if (result.skipped) {
+      showStatus("Scan in progress, try again shortly", "info");
+    } else {
+      showStatus(`Removed ${result.removed} duplicate contacts`, "success");
+    }
+  } catch (error) {
+    console.error(error);
+    showStatus("Error removing duplicates", "error");
   }
 });
 
